@@ -1,5 +1,4 @@
 * [Home](/)
-* [Guide](guide.md)
 
 
 * [I/O]()
