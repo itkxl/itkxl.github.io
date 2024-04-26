@@ -3,7 +3,6 @@
 * 内存监控 
   * [内存映射文件概述](Memory/memory-mapping-file/内存映射文件概述.md)  
   * [内存基础知识概述](Memory/memory-basic-knowledge/内存基础知识概述.md)
-  * [Hprof文件格式解析]()
   * [内存监控建设-Native]()
   * [内存监控建设-Java]()
   
@@ -25,22 +24,15 @@
 
 * 64位架构升级
   * [整体架构设计]()
+  * [64位so后置]()
 
-* 组件架构设计
-  * [定位]()
-  * [分享]()
-
-* ELF二进制文件
+* ELF二进制文件ho
   * [ELF文件格式解析]()
   * [Linker]()
   * [PLT Hook](/ELF/PltHook/PltHook.md)
-  
-* GDB
 
 * eBPF
   * [环境配置]()
   * [eBPF-opensnoop]()
   * [eBPF-eCapture]()
   * [eBPF-stackplz]()
-
-* Frida/隐私合规
