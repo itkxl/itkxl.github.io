@@ -36,10 +36,25 @@ VSync的工作原理是将应用的图形渲染操作与显示器的刷新率进
 - 输入延迟：由于GPU需要等待显示器的刷新周期，这可能导致输入相应有稍微延迟。这对于游戏应用来说，影响比较严重。
 - 帧率下降：如果GPU不能及时完成帧的渲染以匹配每个刷新周期，帧率可能会下降。
 
-在当仅有一个FrameBuffer并且启用Vsync的配置，虽然可以避免屏幕撕裂来提升图像质量，但其也带来性能上的损失，如增加延迟，帧率不稳定等。多FrameBuffer技术的引入，能够有效缓解这些问题，提供更加优秀的
+在当仅有一个FrameBuffer并且启用Vsync的配置，虽然可以避免屏幕撕裂来提升图像质量，但其也带来性能上的损失，如增加延迟，帧率不稳定等。多FrameBuffer技术的引入，能够有效缓解这些问题，提供更加优秀的体验。
 
 ## 四、多缓冲技术
-
+### 4.1 双缓冲技术
+系统使用两个FrameBuffer,FrontBuffer（屏幕上显示的帧）和BackBuffer（后台正在渲染的帧），同时结合VSync，可以有效避免屏幕撕裂的问题。
+ - 基本流程：
+    - BackBuffer进行全部的渲染操作
+    - 在渲染完成后，整个BackBuffer会一次性提交到FrontBuffer，然后直接显示在屏幕上，这样用户看到是一个完整的数据。换句话说，在一帧被渲染完成后才会传递给屏幕，不会看到半成品的帧。
+    - 在FrontBuffer展示的同时，BackBuffer继续进行下面的渲染操作
+ - 问题：
+    - 双缓存配合VSync能明显改善屏幕撕裂现象，但是这种组合在某些情况下会导致页面卡顿。在启动VSync的情况下，硬件个别时候资源紧张，导致后台绘制如果不能及时完成帧渲染，它就必须要等待下一个VSync信号才能将数据与FrontBuffer进行交换，此时仍旧显示前一个FrontBuffer,即造成卡顿。
+### 4.2 三缓冲技术
+在双缓冲与VSync同时使用的情况下，由于渲染资源的不确定性(CPU/GPU)，是可能造成卡顿的，此时，增加一个缓冲区，增加硬件利用效率。
+为了减少双缓冲技术带来的问题，三缓冲技术被引入。在原有的基础上再添加一个后缓冲区，即一个前缓冲区，两个后缓冲区。
+- 基本流程：
+    - 当一个后缓冲区正在被渲染时，另一个后缓冲区可以准备交换到前缓冲区。
+    - 无论渲染速度如何，总一个已经渲染完毕的缓冲区可以在下一个VSync事件时被推送到前缓冲区，减少了卡顿风险。
+- 问题：
+    - 带来了更高的资源消耗
 ## 五、Anrdoid Choreographer
 Android中的Choreographer可以视作Vsync信号与上层应用渲染之间的桥梁。它的主要作用是协调屏幕刷新率和应用渲染操作，确保UI的更新和屏幕的刷新过程能够同步进行，从而提高应用的表演和用户的体验。
 ### 5.1 源码流程
@@ -50,20 +65,161 @@ Android中的Choreographer可以视作Vsync信号与上层应用渲染之间的�
 - 4、初始化CallBackQueues
 ```java
 private Choreographer(Looper looper, int vsyncSource) {
+        //1、绑定Looper
         mLooper = looper;
+        //2、创建FrameHandler，用于处理VSync信号、帧率计算、各种Callback回调等
         mHandler = new FrameHandler(looper);
+        //3、创建FrameDisplayEventReceiver，用于接收SurfaceFlinger发给应用的Vsync信号
         mDisplayEventReceiver = USE_VSYNC
                 ? new FrameDisplayEventReceiver(looper, vsyncSource)
                 : null;
         mLastFrameTimeNanos = Long.MIN_VALUE;
 
         mFrameIntervalNanos = (long)(1000000000 / getRefreshRate());
-
+        
+        //4、初始化CallBackQueues
         mCallbackQueues = new CallbackQueue[CALLBACK_LAST + 1];
         for (int i = 0; i <= CALLBACK_LAST; i++) {
             mCallbackQueues[i] = new CallbackQueue();
         }
         // b/68769804: For low FPS experiments.
         setFPSDivisor(SystemProperties.getInt(ThreadedRenderer.DEBUG_FPS_DIVISOR, 1));
+}
+```
+
+#### 5.1.2 FrameHandler 
+- MSG_DO_FRAME:开始渲染下一帧
+- MSG_DO_SCHEDULE_VSYNC：请求VSync信号
+- MSG_DO_SCHEDULE_CALLBACK：处理各种Callback
+```java
+private final class FrameHandler extends Handler {
+        public FrameHandler(Looper looper) {
+            super(looper);
+        }
+
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case MSG_DO_FRAME:
+                    doFrame(System.nanoTime(), 0, new DisplayEventReceiver.VsyncEventData());
+                    break;
+                case MSG_DO_SCHEDULE_VSYNC:
+                    doScheduleVsync();
+                    break;
+                case MSG_DO_SCHEDULE_CALLBACK:
+                    doScheduleCallback(msg.arg1);
+                    break;
+            }
+        }
     }
 ```
+
+#### 5.1.3 FrameDisplayEventReceiver 
+继承自DisplayEventReceiver并实现了Runnable接口，Vsync信号的注册、申请、接收都是通过这个类。当前我们可以核心关注一下onVsync、run、scheduleVsync方法。
+```java
+        
+
+private final class FrameDisplayEventReceiver extends DisplayEventReceiver implements Runnable {
+    /**
+     * 负责接收VSync信号，并post到UI线程
+     * */
+    @Override
+    public void onVsync(long timestampNanos, long physicalDisplayId, int frame,
+        VsyncEventData vsyncEventData) {
+            //...省略
+            mTimestampNanos = timestampNanos;
+            mFrame = frame;
+            mLastVsyncEventData = vsyncEventData;
+            //收到VSync信号，将自身（Runnable）通过Message传递给FrameHandler,执行下面的run方法
+            Message msg = Message.obtain(mHandler, this);
+            msg.setAsynchronous(true);
+            mHandler.sendMessageAtTime(msg, timestampNanos / TimeUtils.NANOS_PER_MS);
+            //...省略
+        }
+
+    /**
+     * 参考5.1.4
+     * */
+    @Override
+    public void run() {
+        mHavePendingVsync = false;
+        doFrame(mTimestampNanos, mFrame, mLastVsyncEventData);
+    }
+
+    /**
+     * 注册下一帧的回调，这个方法在父类DisplayEventReceiver，与native进行交互
+     * 整体的处理流程可参考5.1.5
+     * */
+    public void scheduleVsync(){
+        //...
+        nativeScheduleVsync(mReceiverPtr);
+    }
+
+}
+```
+#### 5.1.4 Choreographer.doFrame
+```java
+void doFrame(long frameTimeNanos, int frame,
+            DisplayEventReceiver.VsyncEventData vsyncEventData) {
+    //...省略
+    startNanos = System.nanoTime();
+    //jitterNanos计算出实际开始处理帧的时间和预定处理帧的时间之间的差异。
+    //可以理解为帧处理的延迟值。
+    final long jitterNanos = startNanos - frameTimeNanos;
+    //如果延迟值大于单帧时长  frameIntervalNanos = (long)(1000000000 / getRefreshRate())
+    if (jitterNanos >= frameIntervalNanos) {
+        long lastFrameOffset = 0;
+        //计算得到丢帧数skippedFrames以及最后一帧的偏移量lastFrameOffset（后者应该为了让统计更加准确）
+        lastFrameOffset = jitterNanos % frameIntervalNanos;
+        final long skippedFrames = jitterNanos / frameIntervalNanos;
+
+        //如果丢帧超过阈值，则进行打印
+        //SKIPPED_FRAME_WARNING_LIMIT 来源自SystemProperties.getInt("debug.choreographer.skipwarning", 30);
+        // debug.choreographer.skipwarning 这个值可以通过修改源码或者是Hook的手段进行处理。
+        if (skippedFrames >= SKIPPED_FRAME_WARNING_LIMIT) {
+            Log.i(TAG, "Skipped " + skippedFrames + " frames!  "
+                                    + "The application may be doing too much work on its main "
+                                    + "thread.");
+            }
+        if (DEBUG_JANK) {
+            Log.d(TAG, "Missed vsync by " + (jitterNanos * 0.000001f) + " ms "
+                                    + "which is more than the frame interval of "
+                                    + (frameIntervalNanos * 0.000001f) + " ms!  "
+                                    + "Skipping " + skippedFrames + " frames and setting frame "
+                                    + "time to " + (lastFrameOffset * 0.000001f)
+                                    + " ms in the past.");
+        }
+    }
+    frameTimeNanos = startNanos - lastFrameOffset;
+    frameData.updateFrameData(frameTimeNanos);
+
+    //省略...
+
+    //包含markInputHandlingStart、markAnimationsStart、markPerformTraversalsStart
+    //穿插在下面doCallback之间，在对应的实际会做信息记录
+    //使用adb dumpsys gfxinfo看到的信息就是这里记录的
+    mFrameInfo.markXXX();
+
+    //处理各种Callback，包含输入事件、动画、绘制等
+
+
+    //INPUT事件经过处理后，最终会传递到DecorView.dispatchTouchEvent
+    doCallbacks(Choreographer.CALLBACK_INPUT, frameData, frameIntervalNanos);
+
+    //日常统计帧率使用的Choreographer.getInstance().postFrameCallback，就是将Callback计入到CALLBACK_ANIMATION的队列中，此时也就是Callbacl中doFrame方法的回调时机。
+    doCallbacks(Choreographer.CALLBACK_ANIMATION, frameData, frameIntervalNanos);
+    doCallbacks(Choreographer.CALLBACK_INSETS_ANIMATION, frameData,
+                    frameIntervalNanos);
+    
+    //ViewRootImpl中scheduleTraversals注册的就是CALLBACK_TRAVERSAL类型的callback
+    //这个callback中执行就是ViewRootImpl.doTraversal()->performTraversals（）-> performMeasure() -> performLayout() -> performDraw()
+    doCallbacks(Choreographer.CALLBACK_TRAVERSAL, frameData, frameIntervalNanos);
+    doCallbacks(Choreographer.CALLBACK_COMMIT, frameData, frameIntervalNanos);
+}
+
+```
+
+#### 5.1.5 FrameDisplayEventReceiver.scheduleVsync
+当App在调用requestLayout、invalidate、setLayoutParams、动画等行为的时候，会执行到
+Choregrapher.postCallback -> Choregrapher.postCallbackDelayedInternal -> Choregrapher.scheduleFrameLocked -> FrameDisplayEventReceiver.scheduleVsync() ,
+进而请求Vsync信号。
