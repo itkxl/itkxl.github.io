@@ -41,3 +41,29 @@ VSync的工作原理是将应用的图形渲染操作与显示器的刷新率进
 ## 四、多缓冲技术
 
 ## 五、Anrdoid Choreographer
+Android中的Choreographer可以视作Vsync信号与上层应用渲染之间的桥梁。它的主要作用是协调屏幕刷新率和应用渲染操作，确保UI的更新和屏幕的刷新过程能够同步进行，从而提高应用的表演和用户的体验。
+### 5.1 源码流程
+#### 5.1.1 Choreographer(Looper looper,int vsyncSource)
+- 1、绑定Looper
+- 2、创建FrameHandler，用于处理VSync信号、帧率计算、各种Callback回调等
+- 3、创建FrameDisplayEventReceiver，用于接收Vsync信号
+- 4、初始化CallBackQueues
+```java
+private Choreographer(Looper looper, int vsyncSource) {
+        mLooper = looper;
+        mHandler = new FrameHandler(looper);
+        mDisplayEventReceiver = USE_VSYNC
+                ? new FrameDisplayEventReceiver(looper, vsyncSource)
+                : null;
+        mLastFrameTimeNanos = Long.MIN_VALUE;
+
+        mFrameIntervalNanos = (long)(1000000000 / getRefreshRate());
+
+        mCallbackQueues = new CallbackQueue[CALLBACK_LAST + 1];
+        for (int i = 0; i <= CALLBACK_LAST; i++) {
+            mCallbackQueues[i] = new CallbackQueue();
+        }
+        // b/68769804: For low FPS experiments.
+        setFPSDivisor(SystemProperties.getInt(ThreadedRenderer.DEBUG_FPS_DIVISOR, 1));
+    }
+```
