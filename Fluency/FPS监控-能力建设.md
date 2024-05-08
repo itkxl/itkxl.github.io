@@ -328,3 +328,7 @@ public class StandardDeviationCalculator {
 - 核心业务&模块信息
 - ...
 
+
+## 三、踩坑
+- getDecorView()如果调用时机过早，在6.0即一下版本可能导致偶先崩溃
+- Choreographer.postFrameCallback如果没有做上述优化，调用频繁，在小米14上偶先崩溃
