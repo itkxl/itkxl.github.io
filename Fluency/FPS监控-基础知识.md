@@ -48,11 +48,10 @@ VSync的工作原理是将应用的图形渲染操作与显示器的刷新率进
  - 问题：
     - 双缓存配合VSync能明显改善屏幕撕裂现象，但是这种组合在某些情况下会导致页面卡顿。在启动VSync的情况下，硬件个别时候资源紧张，导致后台绘制如果不能及时完成帧渲染，它就必须要等待下一个VSync信号才能将数据与FrontBuffer进行交换，此时仍旧显示前一个FrontBuffer,即造成卡顿。
 ### 4.2 三缓冲技术
-在双缓冲与VSync同时使用的情况下，由于渲染资源的不确定性(CPU/GPU)，是可能造成卡顿的，此时，增加一个缓冲区，增加硬件利用效率。
-为了减少双缓冲技术带来的问题，三缓冲技术被引入。在原有的基础上再添加一个后缓冲区，即一个前缓冲区，两个后缓冲区。
-- 基本流程：
-    - 当一个后缓冲区正在被渲染时，另一个后缓冲区可以准备交换到前缓冲区。
-    - 无论渲染速度如何，总一个已经渲染完毕的缓冲区可以在下一个VSync事件时被推送到前缓冲区，减少了卡顿风险。
+在原有的基础上再添加一个后缓冲区，即一个前缓冲区，两个后缓冲区，这样可以进步一减少卡顿。
+- 优化资源利用：
+    - 在双缓冲系统中，如果后缓冲区正在渲染而前缓冲区正在显示，则GPU在完成渲染任务后必须等待下一个Vsync信号到来才能开始下一帧的渲染，这种等待导致GPU在某些时间段内处于空闲状态，未能充分利用其计算能力。
+    - 三缓冲添加了第二个BackBuffer，此时当一个BackBuffer完成渲染并准备交换到FrontBuffer时，GPU可以立即在另外一个BackBuffer上渲染下一帧，无需等待当前帧显示完毕，减少了GPU的空闲时间。
 - 问题：
     - 带来了更高的资源消耗
 ## 五、Anrdoid Choreographer
@@ -223,3 +222,59 @@ void doFrame(long frameTimeNanos, int frame,
 当App在调用requestLayout、invalidate、setLayoutParams、动画等行为的时候，会执行到
 Choregrapher.postCallback -> Choregrapher.postCallbackDelayedInternal -> Choregrapher.scheduleFrameLocked -> FrameDisplayEventReceiver.scheduleVsync() ,
 进而请求Vsync信号。
+
+### 5.2 Choreographer与同步屏障
+#### 5.2.1 什么是同步屏障
+同步屏障消息就是在消息队列中插入一个屏障，在屏障后面的消息都会被阻隔，不能被处理。不过异步消息除外，屏障不会阻挡异步消息。
+#### 5.2.2 Choreographer与同步屏障
+为了更快响应VSync信号以及渲染操作，在Choreographer执行相关操作的时候，一般伴随着同步屏障。以ViewRootImpl.scheduleTraversals为例，在其中请求Vsync信号的时刻，会先进行同步屏障。
+```java
+public final class ViewRootImpl{
+    void scheduleTraversals() {
+        if (!mTraversalScheduled) {
+            mTraversalScheduled = true;
+            //在队列中插入同步屏障
+            mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();
+            mChoreographer.postCallback(
+                Choreographer.CALLBACK_TRAVERSAL, mTraversalRunnable, null);
+            notifyRendererOfFramePending();
+            pokeDrawLockIfNeeded();
+        }
+    }
+
+    void doTraversal() {
+        if (mTraversalScheduled) {
+            mTraversalScheduled = false;
+            //移除同步屏障
+            mHandler.getLooper().getQueue().removeSyncBarrier(mTraversalBarrier);
+            //...
+        }
+    }
+}
+```
+Choreographer中Handler相关的操作会发送异步消息，避免同步屏障的影响，更快地响应相关的操作。
+```java
+public final class Choreographer{
+
+    private void postCallbackDelayedInternal(int callbackType,
+            Object action, Object token, long delayMillis) {
+        
+        //...
+        Message msg = mHandler.obtainMessage(MSG_DO_SCHEDULE_CALLBACK, action);
+        msg.arg1 = callbackType;
+        //异步消息
+        msg.setAsynchronous(true);
+        mHandler.sendMessageAtTime(msg, dueTime);
+        //...
+    }
+
+    private void scheduleFrameLocked(long now) {
+        //...
+        Message msg = mHandler.obtainMessage(MSG_DO_SCHEDULE_VSYNC);
+        //异步消息
+        msg.setAsynchronous(true);
+        mHandler.sendMessageAtFrontOfQueue(msg);
+        //...
+    }
+}
+```
