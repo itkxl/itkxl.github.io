@@ -3,8 +3,9 @@
 * 内存监控 
   * [内存映射文件概述](Memory/memory-mapping-file/内存映射文件概述.md)  
   * [内存基础知识概述](Memory/memory-basic-knowledge/内存基础知识概述.md)
-  * [内存监控建设-Native]()
-  * [内存监控建设-Java]()
+  * [内存监控建设-Java](Memory/meory-monitor-java/内存监控建设-Java.md)
+  * [内存监控建设-Native](Memory/memory-monitor-native/内存监控建设-Native.md)
+
   
 * FPS监控
   * [FPS监控-基础知识](/Fluency/FPS监控-基础知识.md)
