@@ -47,6 +47,7 @@ VSync的工作原理是将应用的图形渲染操作与显示器的刷新率进
     - 在FrontBuffer展示的同时，BackBuffer继续进行下面的渲染操作
  - 问题：
     - 双缓存配合VSync能明显改善屏幕撕裂现象，但是这种组合在某些情况下会导致页面卡顿。在启动VSync的情况下，硬件个别时候资源紧张，导致后台绘制如果不能及时完成帧渲染，它就必须要等待下一个VSync信号才能将数据与FrontBuffer进行交换，此时仍旧显示前一个FrontBuffer,即造成卡顿。
+
 ### 4.2 三缓冲技术
 在原有的基础上再添加一个后缓冲区，即一个前缓冲区，两个后缓冲区，这样可以进步一减少卡顿。
 - 优化资源利用：
@@ -54,6 +55,7 @@ VSync的工作原理是将应用的图形渲染操作与显示器的刷新率进
     - 三缓冲添加了第二个BackBuffer，此时当一个BackBuffer完成渲染并准备交换到FrontBuffer时，GPU可以立即在另外一个BackBuffer上渲染下一帧，无需等待当前帧显示完毕，减少了GPU的空闲时间。
 - 问题：
     - 带来了更高的资源消耗
+
 ## 五、Anrdoid Choreographer
 Android中的Choreographer可以视作Vsync信号与上层应用渲染之间的桥梁。它的主要作用是协调屏幕刷新率和应用渲染操作，确保UI的更新和屏幕的刷新过程能够同步进行，从而提高应用的表演和用户的体验。
 ### 5.1 源码流程
@@ -62,6 +64,7 @@ Android中的Choreographer可以视作Vsync信号与上层应用渲染之间的�
 - 2、创建FrameHandler，用于处理VSync信号、帧率计算、各种Callback回调等
 - 3、创建FrameDisplayEventReceiver，用于接收Vsync信号
 - 4、初始化CallBackQueues
+
 ```java
 private Choreographer(Looper looper, int vsyncSource) {
         //1、绑定Looper
