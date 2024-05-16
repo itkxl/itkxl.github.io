@@ -12,7 +12,6 @@
   * [FPS监控-能力建设](/Fluency/FPS监控-能力建设.md)
 
 * IO监控
-  * [IO监控-基础概念](/IO/IO.md)
   * [IO监控-Matrix & 拓展](/IO/io-monitory.md)
   
 * 流量监控
@@ -24,15 +23,3 @@
 
 * 64位架构升级
   * [整体架构设计]()
-  * [64位so后置]()
-
-* ELF二进制文件ho
-  * [ELF文件格式解析]()
-  * [Linker]()
-  * [PLT Hook](/ELF/PltHook/PltHook.md)
-
-* eBPF
-  * [环境配置]()
-  * [eBPF-opensnoop]()
-  * [eBPF-eCapture]()
-  * [eBPF-stackplz]()
