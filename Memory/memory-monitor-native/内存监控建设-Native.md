@@ -4,14 +4,16 @@
 - 提供Native内存使用数据：让开发者能够实时了解应用的内存使用情况，包括总内存使用量、峰值使用量等。
 - 能及时发现线上出现的Native内存问题：内存泄漏&内存不合理使用
 ## 三、数据采集
-这部分可以先看一下之前写的[内存映射文件概述](../memory-mapping-file/内存映射文件概述.md)
+这部分可以先看一下之前写的[内存映射文件概述](/Memory/memory-basic-knowledge/内存基础知识概述)
 
-- 命令行获取
+### 3.1 命令行获取
 ```bash
 adb shell dumpsys meminfo pid
 adb shell dumpsys meminfo packageName
+```
 
-//以com.android.settings为例
+以com.android.settings为例
+```bash
 itkxl@itkxl-Ubuntu:~$ adb shell dumpsys meminfo 5865
 Applications Memory Usage (in Kilobytes):
 Uptime: 219723726 Realtime: 584341125
