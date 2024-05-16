@@ -196,7 +196,7 @@ Debug.dumpHprofData(filePath);
 - Hprof文件过大，上传对流量消耗有压力
 - 原始的Hprof文件内部包含所有的用户数据，直接上传有隐私合规的风险
 
-## 六、KOOM&Tailor 原理解析
+## 六、KOOM原理解析
 为了解决5.3所概述的问题，采用的类Koom&Tailor的解决方案。
 - KOOM
     - 地址：https://github.com/KwaiAppTeam/KOOM
@@ -208,13 +208,197 @@ Debug.dumpHprofData(filePath);
     - 整体功能：KOOM更加全面，比Tailor多了子进程Dumo&本地解析相关的能力
     - 裁剪：两者都具有裁剪功能，KOOM裁剪更加彻底，只保留了app-heap
 
-### 6.1 DumpHprof卡顿问题
-- 原因
-由于DumpHprof的时候，需要保证内存无变化，需要将整个虚拟机所有线程都暂停掉，从而造成应用冻结。
-- 解决方案
-    - 失败：new一个子线程来DumpHprof，并不能解决这个问题，因为其是将所有的线程都暂停掉，自然也包含new出来的子线程
-    - 成功：利用Linux的“写时复制”机制，fork一个子进程，此时其内存布局与原进程是完全一致的，然后进行dumpHprof,此时对就基本无影响了。
-- 暂停虚拟机处理
+### 6.1 DumpHprof进程冻结问题
+#### 6.1.1 产生原因
+由于DumpHprof的时候，需要保证内存无变化，需要将整个虚拟机所有线程都暂停掉，外加dump时间较长，从而造成应用冻结。
 ```cpp
+/**
+ * 位置：art/runtime/hprof/hprof.cc
+ **/
+void DumpHeap(const char* filename, int fd, bool direct_to_ddms) {
+  CHECK(filename != nullptr);
+  Thread* self = Thread::Current();
+  gc::ScopedGCCriticalSection gcs(self,
+                                  gc::kGcCauseHprof,
+                                  gc::kCollectorTypeHprof);
+
+  //暂停掉所有线程
+  ScopedSuspendAll ssa(__FUNCTION__, true /* long suspend */);
+  Hprof hprof(filename, fd, direct_to_ddms);
+  hprof.Dump();
+}
+
+/**
+ * 位置：art/runtime/thread_list.cc
+ * 在DumpHeap中调用此方法时候，可以看到仅调用了SuspendAll，并没有执行ResumeAll
+ * 这里是利用了C++的RAII资源管理方式，在{}结束，自动调用析构函数达到执行ResumeAll的目的
+ * 故在执行完Dump后，会回复线程调用
+ **/
+ScopedSuspendAll::ScopedSuspendAll(const char* cause, bool long_suspend) {
+  Runtime::Current()->GetThreadList()->SuspendAll(cause, long_suspend);
+}
+
+ScopedSuspendAll::~ScopedSuspendAll() {
+  Runtime::Current()->GetThreadList()->ResumeAll();
+}
 
 ```
+
+#### 6.1.2 进程冻结解决方案
+从6.1.1的源码来看子线程是无法解决冻结问题的，这里KOOM采用了Fork子进程的方式来处理，由于Linux在Fork子进程的“写时复制机制”，fork的那一瞬间，其内存布局与父进程是共用的（并不是单独copy一份），当父进程或者是子进程在这之后发生内存变更，系统才会分配新的内存。
+
+既然如此，是否我们在执行fork之后，在子进程做dumpHprof是否可以解决问题？实践下载是不行的，代码会在ScopedSuspendAll挺住，因为自己成在执行ScopedSuspendAll的时候等不到其他线程执行到chekpooint返回暂停结果的。
+
+KOOM的操作是在主进程先执行SuspendAll,使ThreadList中保存的所有的线程状态为suspend，之后进行fork,子进程共享父进程的ThreadList全局变量list_,可以欺骗虚拟机，使其认为全部线程已经完成了暂停操作，进而可以执行dump Hprof行为。此时主进程可以直接执行ResumeAll恢复行为。
+
+```java
+@Override
+  public synchronized boolean dump(String path) {
+    // 省略
+    boolean dumpRes = false;
+    try {
+      //暂停当前进程&Fork子进程，fork方法会返回两次结果
+      int pid = suspendAndFork();
+      // pidf返回0，表示子进程，可以执行dump操作
+      if (pid == 0) {
+        Debug.dumpHprofData(path);
+        exitProcess();
+      } else if (pid > 0) {
+        //pid大于0，返回主进程，此时执行resume
+        dumpRes = resumeAndWait(pid);
+      }
+    } catch (IOException e) {
+    }
+    return dumpRes;
+  }
+```
+
+### 6.2 Hprof裁剪
+裁剪有两种方式
+- Dump完成后对文件进行裁剪
+- Dump的同时进行实时裁剪
+
+KOOM和Tailor使用的都是第二种方式，对IO相关的Api进行PLT Hook，在真正写入之前完成裁剪，减少用户磁盘占用以及上传使用的流量。
+
+#### 6.2.1 Hook IO行为
+在Dump之前开启Hook，Dump结束后可以将这部分Hook关闭。
+```cpp
+  /**
+   *
+   * android 7.x，write方法在libc.so中
+   * android 8-9，write方法在libart.so中
+   * android 10，write方法在libartbase.so中
+   * libbase.so是一个保险操作，防止前面2个so里面都hook不到(:
+   *
+   * android 7-10版本，open方法都在libart.so中
+   * libbase.so与libartbase.so，为保险操作
+   */
+  xhook_register("libart.so", "open", (void *)HookOpen, nullptr);
+  xhook_register("libbase.so", "open", (void *)HookOpen, nullptr);
+  xhook_register("libartbase.so", "open", (void *)HookOpen, nullptr);
+
+  xhook_register("libc.so", "write", (void *)HookWrite, nullptr);
+  xhook_register("libart.so", "write", (void *)HookWrite, nullptr);
+  xhook_register("libbase.so", "write", (void *)HookWrite, nullptr);
+  xhook_register("libartbase.so", "write", (void *)HookWrite, nullptr);
+
+
+  /**
+   * HookOpen最终会走到HookOpenInternal方法中
+   * 内部判断如果此时打开的文件路径与我们制定的Hprof输出路径一致，则记录文件描述符fd,以及状态，为后续的HookWrite拦截做准确。
+   **/
+  int HprofStrip::HookOpenInternal(const char *path_name, int flags, ...) {
+    va_list ap;
+    va_start(ap, flags);
+    int fd = open(path_name, flags, ap);
+    va_end(ap);
+
+    if (hprof_name_.empty()) {
+        return fd;
+    }
+
+    //根据路径判断是否为Hprof的输出路径
+    if (path_name != nullptr && strstr(path_name, hprof_name_.c_str())) {
+    hprof_fd_ = fd;
+        is_hook_success_ = true;
+    }
+    return fd;
+}
+
+```
+
+#### 6.2.2 实时裁剪
+Hprof主要以Header和Record组成，Header记录Hprof的整体信息，Record则分很多类型，每种类型有单独的TAG进行标识。内存中大部分数据集中在PRIMITIVE ARRAY DUMP，但其中不包括对象的大小以及引用关系，故这部分是裁剪的重点。
+##### 部分核心裁剪逻辑
+ - 裁剪HPROF_PRIMITIVE_ARRAY_DUMP
+```cpp
+case HPROF_PRIMITIVE_ARRAY_DUMP: {
+      int primitive_array_dump_index = first_index + HEAP_TAG_BYTE_SIZE /*tag*/
+                                       + OBJECT_ID_BYTE_SIZE +
+                                       STACK_TRACE_SERIAL_NUMBER_BYTE_SIZE;
+      int length =
+          GetIntFromBytes((unsigned char *)buf, primitive_array_dump_index);
+      primitive_array_dump_index += U4 /*Length*/;
+
+      // 裁剪掉基本类型数组，无论是否在system space都进行裁剪
+      // 区别是数组左坐标，app space时带数组元信息（类型、长度）方便回填
+      if (is_current_system_heap_) {
+        strip_index_list_pair_[strip_index_ * 2] = first_index;
+      } else {
+        strip_index_list_pair_[strip_index_ * 2] =
+            primitive_array_dump_index + BASIC_TYPE_BYTE_SIZE /*value type*/;
+      }
+      array_serial_no++;
+
+      int value_size = GetByteSizeFromType(
+          ((unsigned char *)buf)[primitive_array_dump_index]);
+      primitive_array_dump_index +=
+          BASIC_TYPE_BYTE_SIZE /*value type*/ + value_size * length;
+
+      // 数组右坐标
+      strip_index_list_pair_[strip_index_ * 2 + 1] = primitive_array_dump_index;
+
+      // app space时，不修改长度因为回填数组时会补齐
+      if (is_current_system_heap_) {
+        strip_bytes_sum_ += primitive_array_dump_index - first_index;
+      }
+      strip_index_++;
+
+      array_serial_no = ProcessHeap(buf, primitive_array_dump_index, max_len,
+                                    heap_serial_no, array_serial_no);
+    } break;
+```
+
+- 裁剪system space（即Zygote和Image）
+```cpp
+case HPROF_INSTANCE_DUMP: {
+      int instance_dump_index =
+          first_index + HEAP_TAG_BYTE_SIZE + OBJECT_ID_BYTE_SIZE +
+          STACK_TRACE_SERIAL_NUMBER_BYTE_SIZE + CLASS_ID_BYTE_SIZE;
+      int instance_size =
+          GetIntFromBytes((unsigned char *)buf, instance_dump_index);
+
+      // 裁剪掉system space
+      if (is_current_system_heap_) {
+        strip_index_list_pair_[strip_index_ * 2] = first_index;
+        strip_index_list_pair_[strip_index_ * 2 + 1] =
+            instance_dump_index + U4 /*占位*/ + instance_size;
+        strip_index_++;
+
+        strip_bytes_sum_ +=
+            instance_dump_index + U4 /*占位*/ + instance_size - first_index;
+      }
+
+      array_serial_no =
+          ProcessHeap(buf, instance_dump_index + U4 /*占位*/ + instance_size,
+                      max_len, heap_serial_no, array_serial_no);
+} break;
+```
+
+此处就暂且省略Tailor的源码解析了，两者整体原理类似，KOOM裁剪更加充分，Tailor保留了System space,可以更加全面的分析内存问题。
+
+
+## 七、补充
+- 在上线这部分的时候，我们当时的紧急问题是部分用户在短时间内(2个小时左右)就发生了OOM,为了减少对用户的二次伤害，故内存泄漏的分析没有使用端上解析能力，而是上传到服务端后进行解析。端上解析能力除了KOOM开源的对shark的优化版本外，可以关心一个Matrix近期更新的C/C++版本的解析组件。
+- 端上解析能力理论上没有必要采用全量解析，只需要抓住几个我们核心的组件或者是页面做重点分析即可，可以省时省力，减少对用户的影响。
+- 在观察Hprof文件的时候，不能单单关心内存泄漏，尤其是首页，它一般是不会被关闭的，也就意味着它不存在狭义上的内存泄漏，但是如果使用对象没有得到合理的释放并逐步增加，也会对内存造成巨大问题。
