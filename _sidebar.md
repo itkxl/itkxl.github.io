@@ -22,4 +22,8 @@
   * [插件化-资源加载](Plugin/Resource.md)
 
 * 64位架构升级
-  * [整体架构设计]()
+  * [整体架构设计](Arm64/adapter/Arm64位适配方案.md)
+
+* LSPatch
+  * [环境搭建](LSPatch/env/lsp-env.md)
+  * [LSPatch原理解析-重打包]()
