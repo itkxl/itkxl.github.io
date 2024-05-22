@@ -22,6 +22,7 @@ git submodule update --init --recursive
 
 ### 3.1调整Gradle编译内存
 需要变更一下Gradle Heap size，直接编译会报gradle oom问题
+
 ![avator](gradle_memory.png)
 
 ### 3.2libxposed问题
@@ -54,6 +55,7 @@ cd ../service
 ### 4.1 添加自定义keystore
 通过Android Studio创建一个签名秘钥keystore，存放到指定目录，其自身携带的无法使用。
 具体目录如下图：
+
 ![avator](keystore.png)
 
 同时完成patch中LSPatch.java中的配置
@@ -67,8 +69,11 @@ private List<String> keystoreArgs = Arrays.asList(null, "123123", "key0", "12312
 ### 4.2 patch-loader&meta-loader产物
 将patch-loader&meta-loader的产物也一同复制到指定目录。
 项目pull下来后，如果编译成功，会在根目录产生一个out的文件夹，如下图
+
 ![avator](out.png)
+
 将其copy到pathModule下的目录
+
 ![avator](out_patch.png)
 
 
@@ -83,6 +88,7 @@ private List<String> keystoreArgs = Arrays.asList(null, "123123", "key0", "12312
 
 ### 4.4 最终产物
 执行Run后，可以在根目录的output文件夹下看到如下apk
+
 ![avator](output.png)
 
 

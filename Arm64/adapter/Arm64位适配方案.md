@@ -10,6 +10,7 @@
 
 启动时见下图，概括来讲系统会根据安装时解压的so路径是否包含64位名称的路径来觉得是从Zygote64 fork进程还是从Zygote fork进程。换句话说，如果App携带了空的64位abi目录，
 安装后系统会误认为此App是支持64位架构的，从而区对应目录找相关的so，如果找不到就会产生崩溃。
+
 ![avator](system.png)
 
 
@@ -129,7 +130,7 @@ ClassLoader在一些版本上有少量变化，需要对不同Api版本进行适
 由于so的管理是使用文件md5作为key，故选择处理的打包时机是merge${buildType}NativeLibs。
 
 
-```groovy
+```java
 project.afterEvaluate {
         android.applicationVariants.all { variant ->
                 String typeStrCapitalize = Utils.capitalize(variant.getName())
@@ -146,7 +147,7 @@ project.afterEvaluate {
 ```
 
 下面是doAction的部分核心逻辑
-```groovy
+```java
         Log.i(Constants.TAG, "======= start to upload 32/64 so =======")
         long start = System.currentTimeMillis()
 
