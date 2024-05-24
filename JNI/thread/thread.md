@@ -40,6 +40,7 @@ int main() {
 
 - 线程创建：使用 std::thread 类的构造函数创建了两个线程。构造函数的参数是一个可调用对象，这里分别是 print_letters 和 print_numbers 函数。
 - join()：join() 方法用于等待线程完成其执行。调用 join() 的主线程（在这个例子中是 main() 函数）将阻塞，直到对应的线程结束其执行。这是确保程序在所有线程完成工作之前不会退出的常用方法。
+
 ## 二、源码
 
 - 头文件：libstdc++-v3/include/bits/std_thread.h
