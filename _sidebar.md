@@ -26,8 +26,8 @@
 * JNI
   * [多线程-thread](/JNI/thread/thread.md)
   * [多线程-condition_variable](/JNI/condition_variable/cv.md)
-  * [多线程-消息队列]()
-  * [多线程-JNIEnv的处理]()
+  * [多线程-消息队列](/JNI/concurrent_queue/concurrent_queue.md)
+  * [多线程-JNIEnv的处理](/JNI/JniEnv/jnienv.md)
 
 * LSPatch
   * [环境搭建](LSPatch/env/lsp-env.md)
