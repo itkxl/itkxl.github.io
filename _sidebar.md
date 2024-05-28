@@ -2,6 +2,7 @@
 
 * IO监控
   * [IO监控-Matrix & 拓展](/IO/io-monitor/io-monitor.md)
+  * [IO监控-eBPF-opensnoop](/IO/ebpf/opensnoop.md)
 
 * 流量监控
   * [流量监控-整体设计](/Traffic/design/流量监控-整体设计.md)
