@@ -21,8 +21,9 @@
   * [FPS监控-能力建设](/Fluency/FPS监控-能力建设.md)
 
 * 插件化
-  * [插件化-ClassLoader](Plugin/ClassLoader.md)
-  * [插件化-资源加载](Plugin/Resource.md)
+  * [插件化-ClassLoader](Plugin/classloader/ClassLoader.md)
+  * [插件化-资源加载](Plugin/resource/Resource.md)
+  * [Phantom-共享宿主代码](Plugin/share/share-code.md)
 
 * JNI
   * [多线程-thread](/JNI/thread/thread.md)

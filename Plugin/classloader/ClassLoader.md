@@ -179,3 +179,153 @@ public final class InMemoryDexClassLoader extends BaseDexClassLoader {
 ```
 
 ## 四、插件化中类加载策略
+
+### 4.1 Phantom
+```java
+@Override
+    public Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+        // First, check whether the class has already been loaded. Return it if that's the
+        // case.
+        Class<?> cl = findLoadedClass(name);
+        if (cl != null) {
+            return cl;
+        }
+        // Next, check whether the class in question is present in the boot classpath.
+        try {
+            return Object.class.getClassLoader().loadClass(name);
+        } catch (ClassNotFoundException ignored) {
+            // Ignore it on purpose
+        }
+        // Next, check whether the class in question is present in the dexPath that this classloader
+        // operates on, or its shared libraries.
+        ClassNotFoundException fromSuper;
+        try {
+            return findClass(name);
+        } catch (ClassNotFoundException ex) {
+            fromSuper = ex;
+        }
+        // Finally, check whether the class in question is present in the parent classloader.
+        try {
+            return getParent().loadClass(name);
+        } catch (ClassNotFoundException cnfe) {
+            // The exception we're catching here is the CNFE thrown by the parent of this
+            // classloader. However, we would like to throw a CNFE that provides details about
+            // the class path / list of dex files associated with *this* classloader, so we choose
+            // to throw the exception thrown from that lookup.
+            throw fromSuper;
+        }
+    }
+```
+在加载插件的流程上，Phantom使用了与系统DelegateLastClassLoader一样的策略，是直接将DelegateLastClassLoader的loadClass的实现直接粘了过来。
+核心实现的目的就是优先尝试从插件中寻找对应的类，如果找不到再从宿主中寻找。
+
+这套机制目前也间接应用了Phantom宿主和插件之间的交互，比如插件想直接使用宿主中的类，下面简单介绍一下这个问题。
+宿主和插件是在不同的Project中进行开发，两者共同依赖了一个公共Maven组件A,如果每个公共组件宿主和插件在各自场景都需要单独依赖一份，必然造成整体的包体积&磁盘占用臃肿，
+如何处理这个问题呢？
+Phantom采用的方式是，在插件打包的过程中，通过gradle脚本将插件中需要使用宿主的class文件剔除，此时在上述Classloader.loadClass过程中，当前的ClassLoader加载的dex无法找到相关的类，则就会尝试调用getParent().loadClass，也就是从宿主的ClassLoader进行加载，达到插件复用宿主的类。
+
+优点：
+- 多插件可复用宿主中的类，减少了包体积&磁盘占用
+- 能力更新&fix bug仅需要处理宿主中的代码即可，当然，需要做好Api兼容相关的工作
+
+缺点：
+- 慢，尤其是插件Dex文件比较大的时候，每次通讯都需要先冲插件Dex中查找，对于需要通讯的类，必然要经历一次插件中类查找失败
+- 需要额外的版本依赖检查，Maven库版本号需要遵循语义化的规则，插件加载与启动需要对库适配性进行检查
+
+这种处理方式不仅仅可以让插件中可以访问宿主的类，实际上通过接口&实现分离的方式，也可以让宿主中调用到插件的自定义实现。
+
+### 4.2 Shadow
+
+### 4.2.1 ApkClassLoader
+```java
+@Override
+    protected Class<?> loadClass(String className, boolean resolve) throws ClassNotFoundException {
+        String packageName;
+        int dot = className.lastIndexOf('.');
+        if (dot != -1) {
+            packageName = className.substring(0, dot);
+        } else {
+            packageName = "";
+        }
+
+        boolean isInterface = false;
+        for (String interfacePackageName : mInterfacePackageNames) {
+            if (packageName.equals(interfacePackageName)) {
+                isInterface = true;
+                break;
+            }
+        }
+
+        if (isInterface) {
+            return super.loadClass(className, resolve);
+        } else {
+            Class<?> clazz = findLoadedClass(className);
+
+            if (clazz == null) {
+                ClassNotFoundException suppressed = null;
+                try {
+                    clazz = findClass(className);
+                } catch (ClassNotFoundException e) {
+                    suppressed = e;
+                }
+
+                if (clazz == null) {
+                    try {
+                        clazz = mGrandParent.loadClass(className);
+                    } catch (ClassNotFoundException e) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                            e.addSuppressed(suppressed);
+                        }
+                        throw e;
+                    }
+                }
+            }
+
+            return clazz;
+        }
+    }
+```
+ApkClassLoader是Shadow中负责加载插件的ClassLoader。其大概得思路也是先从插件中寻找class，找不到的情况下再冲宿主中进行查找。
+但是其有比之前Phantom的处理多了mInterfacePackageNames这个数组，这个是一个包名的白名单，如果目标类符合构造时传入的包名白名单,则从parent ClassLoader中查找,否则先从自己的dexPath中查找,如果找不到,则再从
+parent的parent ClassLoader中查找。这样的约定细化了宿主&插件之间通讯的规则。
+
+与Phantom比较而言，其白名单这个机制可以在插件调用或者使用宿主类的时候减少一次遍历整个插件Dex。当然也有同学可以说，是不是一定程度上也减慢了插件中自身的Dex的查找速度，一般来讲，白名单中设定的包名或类名数量远远小于插件Dex中包含的数量，影响在大部分场景下是比较轻的。
+
+
+### 4.2.2 CombineClassLoader
+```java
+    @Throws(ClassNotFoundException::class)
+    override fun loadClass(name: String, resolve: Boolean): Class<*> {
+        var c: Class<*>? = findLoadedClass(name)
+        val classNotFoundException = ClassNotFoundException(name)
+        if (c == null) {
+            try {
+                c = super.loadClass(name, resolve)
+            } catch (e: ClassNotFoundException) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    classNotFoundException.addSuppressed(e)
+                }
+            }
+
+            if (c == null) {
+                for (classLoader in classLoaders) {
+                    try {
+                        c = classLoader.loadClass(name)!!
+                        break
+                    } catch (e: ClassNotFoundException) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                            classNotFoundException.addSuppressed(e)
+                        }
+                    }
+                }
+                if (c == null) {
+                    throw classNotFoundException
+                }
+            }
+        }
+        return c
+    }
+```
+CombineClassLoader是Shadow中用于处理插件依赖多个其他插件使用到的ClassLoader。
+若插件A依赖插件B,Shadow的处理会将插件B的ClassLoader作为插件A的ClassLoader的ParentClassLoader,若插件A同时依赖多个插件BCD,则Shadow会将这些插件的ClassLoader组合成一个CombineClassLoader，用作插件A的ParentClassLoader。
+Phantom中是没有这套机制的，其插件中的交互都是通过独立的Interface进行处理，插件与插件之间的ClassLoader在Phantom中是完全隔离的。
