@@ -25,11 +25,15 @@
   * [插件化-资源加载](Plugin/resource/Resource.md)
   * [Phantom-共享宿主代码](Plugin/share/share-code.md)
 
+* ELF
+  * [PLT&GOT](/ELF/base/PLT&GOT.md)
+  * [PLT HOOK]()
+
 * JNI
-  * [多线程-thread](/JNI/thread/thread.md)
-  * [多线程-condition_variable](/JNI/condition_variable/cv.md)
-  * [多线程-消息队列](/JNI/concurrent_queue/concurrent_queue.md)
-  * [多线程-JNIEnv的处理](/JNI/JniEnv/jnienv.md)
+  * [thread](/JNI/thread/thread.md)
+  * [condition_variable](/JNI/condition_variable/cv.md)
+  * [消息队列](/JNI/concurrent_queue/concurrent_queue.md)
+  * [JNIEnv的处理](/JNI/JniEnv/jnienv.md)
 
 * LSPatch
   * [环境搭建](LSPatch/env/lsp-env.md)
