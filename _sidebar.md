@@ -27,7 +27,7 @@
 
 * ELF
   * [PLT&GOT](/ELF/base/PLT&GOT.md)
-  * [PLT HOOK]()
+  * [PLT HOOK](/ELF/hook/plthook.md)
 
 * JNI
   * [thread](/JNI/thread/thread.md)
