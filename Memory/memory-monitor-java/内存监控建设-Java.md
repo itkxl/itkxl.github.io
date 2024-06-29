@@ -20,7 +20,7 @@
     - 定义：堆中未分配的内存量。
     - 获取方式：Runtime.getRuntime().freeMemory()
 - Peak Memory Usage (内存峰值)
-    - 定义：单位时间内内存使用峰值
+    - 定义：单位时间内&单次进程内存使用峰值
     - 获取方式：通过对Allocated Memory的聚合&计算获取
 
 ### 3.2 GC
